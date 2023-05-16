@@ -1,0 +1,285 @@
+---
+title: "Outcome Control -- Vignette"
+format: html
+editor: visual
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(data.table)
+library(ggplot2)
+library(ggbrace)
+library(latex2exp)
+library(faircause)
+library(GoFKernel)
+# root <- rprojroot::find_root(rprojroot::is_git_root)
+# r_dir <- file.path(root, "r")
+# invisible(lapply(list.files(r_dir, full.names = TRUE), source))
+# invisible(lapply(list.files(file.path(root, "scripts", "helpers"),
+#                             full.names = TRUE), source))
+```
+
+## Oracle's Perspective
+
+Consider the structural causal model (SCM) introduced in Ex. 1 of the manuscript:
+\begin{align}
+X  &\gets U_X \label{eq:cancer-scm-1} \\
+                    W &\gets \begin{cases} \sqrt{U_W} \text{ if } X = x_0, \\
+                    1 - \sqrt{1 - U_W} \text{ if } X = x_1
+                    \end{cases}  \\
+ 		        D & \gets f_D(X, W) \\
+ 		        Y  &\gets \mathbb{1}(U_Y + \frac{1}{3} WD - \frac{1}{5} W > 0.5). \\
+ 		            U_X &\in \{0,1\}, P(U_X = 1) = 0.5, \\
+ 		            %U_Z&, 
+                        U_W&, U_Y \sim \text{Unif}[0, 1], \label{eq:cancer-scm-n}
+\end{align}
+We begin by generating $n = 500$ samples from the SCM:
+
+```{r}
+set.seed(2023)
+n <- 500
+
+x <- rbinom(n, 1, 0.5)
+uw <- runif(n)
+w <- ifelse(x, 1 - sqrt(1-uw), sqrt(uw)) 
+uy <- runif(n)
+
+labels <- c("Doomed", "Helped", "Safe")
+
+alph <- 1 / 5
+beta <- 1 / 3
+delta <- beta * w
+
+canon <- ifelse(uy > 0.5 + w * alph, "Safe",
+                ifelse(uy > 0.5 + w * alph - w * beta, "Helped", "Doomed"))
+```
+
+As can be seen from the code, the latent variable $U_Y$ determines which canonical type the individual belongs to. After generating the data, we visualize it from the oracle's perspective, assuming access to $U_Y$:
+
+```{r}
+#| echo: false
+#| fig-align: center
+df <- data.frame(x, w, uy, canon, delta)
+
+dt.follow <-
+  data.table(group = c(1,1,1),
+             polygon.x = c(0.5, 0.5 + 1 * alph - 1  * beta,
+                           0.5 + 1 * alph - 0 * beta),
+             polygon.y = c(0, 1, 1))
+
+dt.never <- data.table(group = c(1,1,1,1),
+                       polygon.x = c(0, 0, 0.5 + 1 * alph - 1 * beta,
+                                     0.5 + 0 * alph - 0 * beta),
+                       polygon.y = c(0, 1, 1, 0))
+
+dt.always <-
+  data.table(group = c(1,1,1,1),
+             polygon.x = c(0.5 + 1 * alph - 0 * beta, 1, 1, 0.5),
+             polygon.y = c(1, 1, 0, 0))
+
+ggplot(df, aes(x = uy, y = w + x, color = canon)) +
+  geom_polygon(data = dt.follow,
+               aes(x = polygon.x, y = polygon.y, group = group, fill = "green"),
+               color = "green", alpha = 0.3, linewidth = 0) +
+  geom_polygon(data = dt.follow,
+               aes(x = polygon.x, y = 1+polygon.y, group = group, fill = "green"),
+               color = "green", alpha = 0.3, linewidth = 0) +
+  geom_polygon(data = dt.never,
+               aes(x = polygon.x, y = polygon.y, group = group, fill = "blue"),
+               color = "blue", alpha = 0.3, linewidth = 0) +
+  geom_polygon(data = dt.never,
+               aes(x = polygon.x, y = 1+polygon.y, group = group, fill = "blue"),
+               color = "blue", alpha = 0.3, linewidth = 0) +
+  geom_polygon(data = dt.always,
+               aes(x = polygon.x, y = polygon.y, group = group, fill = "orange"),
+               color = "orange", alpha = 0.3, linewidth = 0) +
+  geom_polygon(data = dt.always,
+               aes(x = polygon.x, y = 1+polygon.y, group = group, fill = "orange"),
+               color = "orange", alpha = 0.3, linewidth = 0) +
+  geom_point() +
+  scale_colour_manual(values = c("orange", rgb(27, 177, 0, maxColorValue = 255), "blue"),
+                      name = "Canonical Type:",
+                      labels = labels) +
+  theme_minimal() +
+  geom_brace(aes(c(-0.1, 0), c(0, 1), label = "X = 0"), inherit.data=F, rotate = 270,
+             labelsize = 5, labelrotate = 90) +
+  geom_brace(aes(c(-0.1, 0), c(1, 2), label = "X = 1"), inherit.data=F, rotate = 270,
+             labelsize = 5, labelrotate = 90) +
+  coord_cartesian(y=1.1 * range(df$w + df$x), clip = "off") +
+  xlab(latex2exp::TeX("$u_y$ (resilience)")) + ylab(latex2exp::TeX("$W = w$")) +
+  theme(
+    # axis.ticks.y = element_blank(),
+    # axis.text.y = element_blank(),
+    # axis.title.y = element_text(color = "white"),
+    legend.position = "bottom",
+    legend.title = element_text(size = 16),
+    legend.text = element_text(size = 14),
+    legend.margin=margin(t = 0.31, b = 0.31, unit='cm'),
+    axis.title = element_text(size = 16)#,
+    # axis.title.y.left = element_text()
+  ) +
+  annotate(
+    "text", label = "U-space for Oracle",
+    x = 0.5, y = 2.1, size = 6, colour = "black"
+  ) + scale_fill_discrete(guide = "none") +
+  geom_segment(aes(x = 0, y = 1, xend = 1, yend = 1), color = "black",
+               linewidth = 0.5, linetype = "dashed") +
+  scale_y_continuous(position = "right",
+                     labels = c("0.0", "0.5", "0.0\n1.0", "0.5", "1"),
+                     breaks = c(0, 0.5, 1, 1.5, 2))
+```
+
+From the oracle's perspective, treating individuals in the green are is optimal. However, we next plot the perspective of the decision-maker:
+
+
+## Decision-maker's Perspective
+
+We next plot the decision-maker's perspective, which is based on estimating the benefit $E[Y_{d_1} - Y_{d_0} \mid x, z, w]$. We visualize the data based on the notion of benefit $\Delta$:
+
+```{r}
+#| echo: false
+#| fig-align: center
+ggplot(df, aes(x = uy, y = w + x, color = delta)) +
+  geom_point() +
+  scale_color_gradient(name = TeX("Benefit $\\Delta$"),
+                       labels = NULL, low = rgb(1, 0, 0), high = rgb(0, 1, 0)) +
+  theme_minimal() +
+  geom_brace(aes(c(-0.1, 0), c(0, 1), label = "X = 0"), inherit.data=F, rotate = 270,
+             labelsize = 5, labelrotate = 90) +
+  geom_brace(aes(c(-0.1, 0), c(1, 2), label = "X = 1"), inherit.data=F, rotate = 270,
+             labelsize = 5, labelrotate = 90) +
+  coord_cartesian(y=1.1 * range(df$w + df$x), clip = "off") +
+  xlab(latex2exp::TeX("$u_y$ (resilience)")) + ylab(latex2exp::TeX("$W = w$")) +
+  theme(
+    # axis.ticks.y = element_blank(),
+    # axis.text.y = element_blank(),
+    legend.position = "bottom",
+    legend.title = element_text(size = 16),
+    axis.title.x = element_text(size = 16, color = "white"),
+    axis.title.y = element_text(size = 16),
+    axis.text.x = element_text(color = "white")
+  ) +
+  annotate(
+    "text", label = "U-space for Decision-Maker",
+    x = 0.5, y = 2.1, size = 6, colour = "black"
+  ) + geom_segment(aes(x = 0, y = 1, xend = 1, yend = 1), color = "black",
+                   linewidth = 0.5, linetype = "dashed") +
+  scale_y_continuous(position = "right",
+                     labels = c("0.0", "0.5", "0.0\n1.0", "0.5", "1"),
+                     breaks = c(0, 0.5, 1, 1.5, 2))
+```
+
+Therefore, when looking at the benefit, it is clearly higher for the $X = x_1$ group, which also explains why the decision-maker treats more individuals in this group.
+
+## Computing the Disparity in Treatment Allocation
+
+We look at all patients whould be treated by the policy
+\begin{align}
+  \mathbb{1}(W > \frac{1}{2}).
+\end{align}
+```{r}
+# construct the decision policy 
+d <- as.integer(w > 1 / 2)
+# look at resource allocation in each group
+tapply(d, x, mean)
+```
+Therefore, we obtain that
+\begin{align}
+  P(d \mid x_1) - P(d \mid x_0) \approx -52\%.
+\end{align}
+The true population value (as shown in the paper) is -50\%.
+
+## Decomposing the Disparity
+
+We next look at decomposing the disparity. We first use the `faircause` package to decompose the disparity in resource allocation:
+```{r}
+#| fig-align: center
+# construct the data
+df <- data.frame(x, w, d, delta)
+
+# apply the fairness cookbook
+fc_d <- fairness_cookbook(df, X = "x", Z = NULL, W = "w", Y = "d",
+                          x0 = 0, x1 = 1)
+
+autoplot(fc_d) + ggtitle(TeX("$P(d | x_1) - P(d | x_0)$ decomposition")) 
+```
+Therefore, as explained in the text, the disparity is explained by the indirect effect. We can also decompose the disparity in benefit, $E[\Delta \mid x_1] - E[\Delta \mid x_0]$:
+
+```{r}
+#| fig-align: center
+#| suppress-warnings: TRUE
+# apply the fairness cookbook
+fc_delta <- fairness_cookbook(df, X = "x", Z = NULL, W = "w", Y = "delta",
+                              x0 = 0, x1 = 1)
+
+autoplot(fc_delta) +
+  ggtitle(TeX("$E[\\Delta | x_1] - E[\\Delta | x_0]$ decomposition")) 
+```
+
+## Constructing the causally fair $D^{CF}$ policy
+
+The clinicians first want to construct the causally fair policy. For doing so,
+they first construct the counterfactual values of the illness severity, using the transformation:
+\begin{align}
+  \forall u \text{ s.t. } X(u) = x_1: \Delta_{x_1, W_{x_0}}(u) = \frac{1}{3} \sqrt{1 - (1 - W(u))^2}.
+\end{align}
+
+```{r}
+# construct the data
+w_cf <- w
+w_cf[x == 1] <- sqrt(1 - (1 - w_cf[x == 1])^2)
+delta_cf <- w_cf / 3
+
+b <- mean(d)
+fcf <- ecdf(delta_cf)
+fcf.inv <- inverse(fcf, lower = 0, upper = 1)
+d_cf <- as.integer(delta_cf > fcf.inv(1 - b))
+tapply(d_cf, x, mean)
+```
+Therefore, we see that
+\begin{align}
+  P(d^{CF} \mid x_1) - P(d^{CF} \mid x_0) \approx 0\%. 
+\end{align}
+
+## Constructing the causally fair $D^{UT}$ policy
+
+Finally, to perform causally aware utilitarian approach, we have from the disparity in $D^{CF}$ that:
+\begin{align}
+  M_{ca} = 0.
+\end{align}
+Therefore, the causally aware approach would in this case compute:
+```{r}
+
+# Step 4: compute \epsilon, l
+epsilon <- mean(d[x == 1]) - mean(d[x == 0])
+l <- sum(x == 1) / sum(x == 0)
+
+# compute inverse function of \Delta \mid x_0
+f0 <- ecdf(delta[x == 0])
+f0.inv <- inverse(f0, lower = 0, upper = 1)
+
+# compute \delta^{x_0}
+delta_x0 <- f0.inv(1 - (mean(delta[x == 0] > 1 / 6) + epsilon * l / (1 + l)))
+
+# compute inverse function of \Delta \mid x_0
+f1 <- ecdf(delta[x == 1])
+f1.inv <- inverse(f1, lower = 0, upper = 1)
+
+b <- mean(d)
+# compute \delta^{x_0}
+delta_x1 <-  f1.inv(1 - (b / mean(x == 1) - 1 / l * mean(delta[x == 0] >= delta_x0)))
+
+d_ut <- rep(0, length(d))
+d_ut[x == 0] <- delta[x == 0] > delta_x0
+d_ut[x == 1] <- delta[x == 1] > delta_x1
+
+# compute the allocated proportions
+tapply(d_ut, x, mean)
+```
+
+In particular, we have showed that
+\begin{align}
+  P(d^{UT} \mid x_1) - P(d^{UT} \mid x_0) \approx 0\%. 
+\end{align}
+
+We remark that, in general, policies $D^{CF}$ and $D^{UT}$ may pick different individuals.
