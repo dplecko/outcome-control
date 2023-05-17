@@ -93,51 +93,36 @@ ggsave("d-curr-decomposed.png", width = 6, height = 4)
 # set Y as the post intervention o2
 res[, y := o2post]
 
-# estimate the benefit (could use xgboost instead to check...)
-forest <- FALSE
-if (forest) {
-  
-  rf <- ranger(y ~ o2prior + sofa + sex + age + respirator, data = res)
-  
-  res0 <- res1 <- copy(res)
-  res0[, respirator := 0]
-  y0 <- predict(rf, res0)$predictions
-  
-  res1[, respirator := 1]
-  y1 <- predict(rf, res1)$predictions
-} else {
+# estimate the benefit (xgboost)
+xgbcv <- xgb.cv(params = list(eta = 0.1), 
+                data = as.matrix(res[, c(X, Z, W, D), with = FALSE]), 
+                label = res[[Y]], nrounds = 100, early_stopping_rounds = 3, 
+                nfold = 10)
 
-  xgbcv <- xgb.cv(params = list(eta = 0.1), 
-                  data = as.matrix(res[, c(X, Z, W, D), with = FALSE]), 
-                  label = res[[Y]], nrounds = 100, early_stopping_rounds = 3, 
-                  nfold = 10)
-  
-  # pick optimal number of rounds
-  nrounds <- xgbcv$best_iteration
-  
-  # train the prediction object
-  xgb <- xgboost(params = list(eta = 0.1), 
-                 data = as.matrix(res[, c(X, Z, W, D), with = FALSE]), 
-                 label = res[[Y]], nrounds = nrounds, )
-  
-  res0 <- res1 <- copy(res)
-  res0[[D]] <- 0
-  res1[[D]] <- 1
-  
-  y0 <- predict(xgb, as.matrix(res0[, c(X, Z, W, D), with = FALSE]))
-  y1 <- predict(xgb, as.matrix(res1[, c(X, Z, W, D), with = FALSE]))
-}
+# pick optimal number of rounds
+nrounds <- xgbcv$best_iteration
+
+# train the prediction object
+xgb <- xgboost(params = list(eta = 0.1), 
+               data = as.matrix(res[, c(X, Z, W, D), with = FALSE]), 
+               label = res[[Y]], nrounds = nrounds, )
+
+res0 <- res1 <- copy(res)
+res0[[D]] <- 0
+res1[[D]] <- 1
+
+y0 <- predict(xgb, as.matrix(res0[, c(X, Z, W, D), with = FALSE]))
+y1 <- predict(xgb, as.matrix(res1[, c(X, Z, W, D), with = FALSE]))
 
 res[, y1 := y1]
 res[, y0 := y0]
-adjust <- TRUE
-if (adjust) res[y1 < y0, y1 := y0] else res <- res[y1 > y0]
-# enforce monotonicity of the treatment
+res[y1 < y0, y1 := y0] # enforce monotonicity of the treatment
 res[, delta := y1 - y0]
 
 # o2sat loss function
 o2sat_loss <- function(x) ifelse(x < 97, -(x-97)^2, 0)
-# compute f(benefit)
+
+# compute f(potential outcomes)
 res[, fdelta := o2sat_loss(y1) - o2sat_loss(y0)]
 
 # group into deciles
@@ -208,48 +193,14 @@ autoplot(fcb_fdel, signed = FALSE) + ggtitle(NULL) +
   scale_x_discrete(labels = c("TV", "DE", "IE", "SE"))
 ggsave("delta-decomposed.png", width = 6, height = 4)
 
-# apply Algorithm 3
-fairadapt <- TRUE
-if (fairadapt) {
-  # construct the diagram
-  Ys <- c("y1", "y0")
-  adj <- array(0, dim = c(length(c(X, Z, W, Ys)), length(c(X, Z, W, Ys))))
-  colnames(adj) <- rownames(adj) <- c(X, Z, W, Ys)
-  
-  adj[X, c(W, Ys)] <- adj[Z, c(W, Ys)] <- adj[W, Ys] <- 1L
-  adj[c("sofa", "resp", "po2"), "o2prior"] <- 
-    adj[c("resp", "po2"), "sofa"] <- 1L
-  
-  # compute counterfactual values of Y_{d_1}, Y_{d_0}
-  res[, sex := factor(sex, levels = c(1, 0))]
-  
-  # Y_{d_1} adjusted
-  Y <- "y1"
-  vars <- c(X, Z, W, Y)
-  yd1_c <- fairadapt::fairadapt(
-    as.formula(paste(Y, "~", paste(c(X, Z, W), collapse = "+"))),
-    prot.attr = X, adj.mat = adj[vars, vars], train.data = res[, vars, with=FALSE]
-  )
-  res[, y1_c := fairadapt::adaptedData(yd1_c)$y1]
-  
-  # Y_{d_0} adjusted
-  Y <- "y0"
-  vars <- c(X, Z, W, Y)
-  yd0_c <- fairadapt::fairadapt(
-    as.formula(paste(Y, "~", paste(c(X, Z, W), collapse = "+"))),
-    prot.attr = X, adj.mat = adj[vars, vars], train.data = res[, vars, with=FALSE]
-  )
-  res[, y0_c := fairadapt::adaptedData(yd0_c)$y0]
-} else {
-  
-  res0[, sex := 1]
-  res1[, sex := 1]
-  
-  y0_c <- predict(xgb, as.matrix(res0[, c(X, Z, W, D), with = FALSE]))
-  y1_c <- predict(xgb, as.matrix(res1[, c(X, Z, W, D), with = FALSE]))
-  res[, y0_c := y0_c]
-  res[, y1_c := y1_c]
-}
+# apply Algorithm 3 to remove remaining direct effect
+res0[, sex := 1]
+res1[, sex := 1]
+
+y0_c <- predict(xgb, as.matrix(res0[, c(X, Z, W, D), with = FALSE]))
+y1_c <- predict(xgb, as.matrix(res1[, c(X, Z, W, D), with = FALSE]))
+res[, y0_c := y0_c]
+res[, y1_c := y1_c]
 
 # compute counterfactual values of benefit
 res[y1_c < y0_c, y1_c := y0_c]
@@ -304,3 +255,12 @@ ggplot(
   scale_y_continuous(labels = scales::percent)
 
 ggsave("policy-comparison.png", width = 6, height = 4)
+
+# res_helper <- function(fcb) {
+#   
+#   df <- summary(fcb)$measures
+#   df <- df[df$measure %in% c("ctfde", "ctfie", "ctfse"),]
+#   df$value <- round(df$value * 100, 2)
+#   df$value[c(2, 3)] <- -df$value[c(2, 3)]
+#   cat(paste(df$measure, df$value), sep = "\n")
+# }
