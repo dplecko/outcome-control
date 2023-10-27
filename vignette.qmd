@@ -22,8 +22,7 @@ library(xgboost)
 
 ## Oracle's Perspective
 
-Consider the structural causal model (SCM) introduced in Ex. 1 of the paper: 
-\begin{align}
+Consider the structural causal model (SCM) introduced in Ex. 1 of the paper: \begin{align}
 X  &\gets U_X \label{eq:cancer-scm-1} \\
                     W &\gets \begin{cases} \sqrt{U_W} \text{ if } X = x_0, \\
                     1 - \sqrt{1 - U_W} \text{ if } X = x_1
@@ -157,7 +156,6 @@ py_d1 <- predict(logreg, df_d1, type = "response")
 df$delta_hat <- delta_hat <- py_d1 - py_d0
 ```
 
-
 After estimating $\Delta$, we visualize the data based on the obtained estimates:
 
 ```{r}
@@ -200,8 +198,7 @@ Therefore, when looking at the benefit, it is clearly higher for the $X = x_0$ g
 
 ## Computing the Disparity in Treatment Allocation
 
-We look at the policy $D^*$ obtained from Algorithm 1:
-\begin{align}
+We look at the policy $D^*$ obtained from Algorithm 1: \begin{align}
   D^* = \mathbb{1}(\Delta > \frac{1}{6}).
 \end{align}
 
@@ -212,8 +209,7 @@ d_star <- as.integer(delta_hat > quantile(delta_hat, 0.5))
 tapply(d_star, x, mean)
 ```
 
-Therefore, we obtained that 
-\begin{align}
+Therefore, we obtained that \begin{align}
   P(d^* \mid x_1) - P(d^* \mid x_0) \approx -51.5\%.
 \end{align} The true population value (as shown in the paper) is -50%.
 
@@ -289,8 +285,8 @@ The true population value of the disparity for $D^{CF}$, discussed in the paper,
 
 Finally, to perform the utilitarian approach, we have from the disparity in $D^{CF}$ that: \begin{align}
   M = 0.
-\end{align} 
-Therefore, following Algorithm 3 with method = UT, we compute:
+\end{align} Therefore, following Algorithm 3 with method = UT, we compute:
+
 ```{r}
 
 # compute \epsilon, l
@@ -325,7 +321,6 @@ tapply(d_ut, x, mean)
 
 In particular, we have showed that \begin{align}
   P(d^{UT} \mid x_1) - P(d^{UT} \mid x_0) \approx 0\%. 
-\end{align}
-The true population value also equals $0\%$.
+\end{align} The true population value also equals $0\%$.
 
 In general, the policies $D^{CF}$ and $D^{UT}$ may pick different individuals for treatment. The conditions under which the policies $D^{CF}$ and $D^{UT}$ are the same are discussed in Appendix D of the paper. In the above example, these conditions are satisfied, and $D^{CF}$, $D^{UT}$ select the same group of individuals.
